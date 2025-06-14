@@ -1,11 +1,14 @@
 import time
 import os
+import sys
 import requests
 import pandas as pd
+from datetime import datetime
 from binance.client import Client
 from ta.momentum import RSIIndicator
 from dotenv import load_dotenv
 
+# --- Завантаження .env ---
 load_dotenv()
 
 # --- Змінні середовища ---
@@ -14,12 +17,36 @@ BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# --- Налаштування ---
 SYMBOL = 'BTCUSDT'
 INTERVAL = Client.KLINE_INTERVAL_1MINUTE
 RSI_PERIOD = 14
 
 # --- Binance клієнт ---
 client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
+
+# --- Telegram повідомлення ---
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    try:
+        requests.post(url, data=data)
+    except Exception as e:
+        print(f"Telegram error: {e}")
+
+# --- Перевірка часу запуску ---
+now = datetime.now()
+current_hour = now.hour
+
+if current_hour < 8 or current_hour >= 17:
+    msg = f"🔴 Бот завершив роботу — {now.strftime('%H:%M')}, поза робочим часом (08:00–17:00)."
+    print(msg)
+    send_telegram(msg)
+    sys.exit()
+else:
+    msg = f"🟢 Бот запущено — {now.strftime('%H:%M')} у межах робочого часу."
+    print(msg)
+    send_telegram(msg)
 
 # --- Отримання свічок ---
 def get_klines(symbol, interval, limit=100):
@@ -54,7 +81,7 @@ def is_shooting_star(o, c, h, l):
     lower = min(o, c) - l
     return upper > 2 * body and lower < body
 
-# --- Аналіз ---
+# --- Аналіз сигналів ---
 def analyze(df):
     rsi = RSIIndicator(close=df['close'], window=RSI_PERIOD).rsi()
     last_rsi = rsi.iloc[-1]
@@ -73,15 +100,6 @@ def analyze(df):
             return "SELL"
     return None
 
-# --- Telegram ---
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-    try:
-        requests.post(url, data=data)
-    except Exception as e:
-        print(f"Telegram error: {e}")
-
 # --- Основний цикл ---
 print("Сигнальний бот запущено.")
 while True:
@@ -94,7 +112,7 @@ while True:
             send_telegram(msg)
             print(msg)
         else:
-            print("Сигналів немає.")
+            print("⏳ Сигналів немає.")
     except Exception as e:
         print(f"Помилка: {e}")
     time.sleep(60)
