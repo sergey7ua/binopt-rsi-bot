@@ -1,65 +1,40 @@
 import time
 import os
-import sys
 import requests
 import pandas as pd
-from datetime import datetime
-from binance.client import Client
 from ta.momentum import RSIIndicator
 from dotenv import load_dotenv
 
-# --- Завантаження .env ---
 load_dotenv()
 
-# --- Змінні середовища ---
-BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
-BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
+# --- API ключі ---
+TD_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# --- Налаштування ---
-SYMBOL = 'EURUSD'
-INTERVAL = Client.KLINE_INTERVAL_1MINUTE
+SYMBOL = "EUR/USD"
 RSI_PERIOD = 14
+INTERVAL = "1min"
+LIMIT = 50  # для RSI + свічкових патернів
 
-# --- Binance клієнт ---
-client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
-
-# --- Telegram повідомлення ---
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-    try:
-        requests.post(url, data=data)
-    except Exception as e:
-        print(f"Telegram error: {e}")
-
-# --- Перевірка часу запуску ---
-now = datetime.now()
-current_hour = now.hour
-
-if current_hour < 8 or current_hour >= 17:
-    msg = f"🔴 Бот завершив роботу — {now.strftime('%H:%M')}, поза робочим часом (08:00–17:00)."
-    print(msg)
-    send_telegram(msg)
-    sys.exit()
-else:
-    msg = f"🟢 Бот запущено — {now.strftime('%H:%M')} у межах робочого часу."
-    print(msg)
-    send_telegram(msg)
-
-# --- Отримання свічок ---
-def get_klines(symbol, interval, limit=100):
-    klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
-    df = pd.DataFrame(klines, columns=[
-        'timestamp', 'open', 'high', 'low', 'close', 'volume',
-        'close_time', 'quote_asset_volume', 'number_of_trades',
-        'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-    ])
-    df['open'] = df['open'].astype(float)
-    df['high'] = df['high'].astype(float)
-    df['low'] = df['low'].astype(float)
-    df['close'] = df['close'].astype(float)
+# --- Отримання даних з TwelveData ---
+def get_klines(symbol, interval, outputsize=LIMIT):
+    url = f"https://api.twelvedata.com/time_series"
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "outputsize": outputsize,
+        "apikey": TD_API_KEY,
+    }
+    response = requests.get(url, params=params).json()
+    if "values" not in response:
+        raise Exception("Помилка від TwelveData: " + str(response))
+    df = pd.DataFrame(response["values"])
+    df = df.iloc[::-1]  # reverse
+    df["open"] = df["open"].astype(float)
+    df["high"] = df["high"].astype(float)
+    df["low"] = df["low"].astype(float)
+    df["close"] = df["close"].astype(float)
     return df
 
 # --- Патерни ---
@@ -81,16 +56,15 @@ def is_shooting_star(o, c, h, l):
     lower = min(o, c) - l
     return upper > 2 * body and lower < body
 
-# --- Аналіз сигналів ---
+# --- Аналіз ---
 def analyze(df):
-    rsi = RSIIndicator(close=df['close'], window=RSI_PERIOD).rsi()
+    rsi = RSIIndicator(close=df["close"], window=RSI_PERIOD).rsi()
     last_rsi = rsi.iloc[-1]
 
-    # 3 останні свічки
-    o1, c1 = df['open'].iloc[-3], df['close'].iloc[-3]
-    o2, c2 = df['open'].iloc[-2], df['close'].iloc[-2]
-    o3, c3 = df['open'].iloc[-1], df['close'].iloc[-1]
-    h3, l3 = df['high'].iloc[-1], df['low'].iloc[-1]
+    o1, c1 = df["open"].iloc[-3], df["close"].iloc[-3]
+    o2, c2 = df["open"].iloc[-2], df["close"].iloc[-2]
+    o3, c3 = df["open"].iloc[-1], df["close"].iloc[-1]
+    h3, l3 = df["high"].iloc[-1], df["low"].iloc[-1]
 
     if last_rsi < 30:
         if is_bullish_engulfing(o1, c1, o2, c2) or is_hammer(o3, c3, h3, l3):
@@ -100,19 +74,28 @@ def analyze(df):
             return "SELL"
     return None
 
+# --- Telegram ---
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    try:
+        requests.post(url, data=data)
+    except Exception as e:
+        print("Telegram error:", e)
+
 # --- Основний цикл ---
-print("Сигнальний бот запущено.")
+print("Бот запущено.")
 while True:
     try:
         df = get_klines(SYMBOL, INTERVAL)
         signal = analyze(df)
         if signal:
             price = df['close'].iloc[-1]
-            msg = f"{signal} сигнал по {SYMBOL} @ {price:.2f}"
+            msg = f"{signal} сигнал по {SYMBOL} @ {price}"
             send_telegram(msg)
             print(msg)
         else:
-            print("⏳ Сигналів немає.")
+            print("Сигналів немає.")
     except Exception as e:
-        print(f"Помилка: {e}")
+        print("Помилка:", e)
     time.sleep(60)
