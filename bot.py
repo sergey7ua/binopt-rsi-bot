@@ -85,6 +85,7 @@ def send_telegram(message):
 
 # --- Основний цикл ---
 print("Бот запущено.")
+print("✅ Новий код v.1.3 виконано")
 while True:
     try:
         df = get_klines(SYMBOL, INTERVAL)
